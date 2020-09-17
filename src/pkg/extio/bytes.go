@@ -26,6 +26,12 @@ func (m *BytesManager) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+func (m *BytesManager) ReadFrom(r io.Reader) (int64, error) {
+	n, err := r.Read(m.internal[m.offset:])
+	m.offset += n
+	return int64(n), err
+}
+
 func (m *BytesManager) Seek(offset int64, whence int) (int64, error) {
 	if whence == io.SeekStart {
 		m.offset = int(offset)
@@ -51,6 +57,12 @@ func (m *BytesManager) Write(data []byte) (int, error) {
 	copy(m.internal[m.offset:newOffset], data)
 	m.offset = newOffset
 	return len(data), nil
+}
+
+func (m *BytesManager) WriteTo(w io.Writer) (int64, error) {
+	n, err := w.Write(m.internal[m.offset:])
+	m.offset += n
+	return int64(n), err
 }
 
 func (m *BytesManager) Close() error {
