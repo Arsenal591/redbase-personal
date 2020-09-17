@@ -68,3 +68,9 @@ func (m *BytesManager) WriteTo(w io.Writer) (int64, error) {
 func (m *BytesManager) Close() error {
 	return nil
 }
+
+func (m *BytesManager) Clear() {
+	for i := range m.internal {
+		m.internal[i] = 0
+	}
+}
