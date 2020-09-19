@@ -57,3 +57,28 @@ func NewBufferPool(numPages int) *BufferPool {
 
 	return ret
 }
+
+// Make a page the head of used LRU queue.
+// Input argument `page` should not be already in the queue.
+func (bp *BufferPool) makeHeadUsed(page *BufferedPage) {
+	page.next = bp.headUsed
+	if bp.headUsed != nil {
+		bp.headUsed.prev = page
+	}
+	page.prev = nil
+	if bp.tailUsed == nil {
+		bp.tailUsed = page
+	}
+	bp.headUsed = page
+}
+
+// Make a page the head of free queue.
+// Input argument `page` should not be already in the queue.
+func (bp *BufferPool) makeHeadFree(page *BufferedPage) {
+	page.next = bp.headFree
+	if bp.headFree != nil {
+		bp.headFree.prev = page
+	}
+	page.prev = nil
+	bp.headFree = page
+}
