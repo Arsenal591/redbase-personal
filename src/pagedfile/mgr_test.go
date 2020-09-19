@@ -149,3 +149,79 @@ func TestMakeHeadFree(t *testing.T) {
 		assert.Equal(t, tc.newHeadIdx, pool.headFree.idx, "Head free is modified.")
 	}
 }
+
+func TestRemoveUsed(t *testing.T) {
+	testCases := []struct {
+		original []TypePoolIdx
+		removed  TypePoolIdx
+		expected []TypePoolIdx
+	}{
+		{
+			original: []TypePoolIdx{0, 1, 2},
+			removed:  1,
+			expected: []TypePoolIdx{0, 2},
+		},
+	}
+
+	for _, tc := range testCases {
+		// prepare
+		numPages := 4
+		pool := NewBufferPool(numPages)
+		utilsMakeLinkedList(pool, tc.original)
+		if len(tc.original) > 0 {
+			pool.headUsed = pool.buffer[tc.original[0]]
+			pool.tailUsed = pool.buffer[tc.original[len(tc.original)-1]]
+		} else {
+			pool.headUsed = nil
+			pool.tailUsed = nil
+		}
+
+		// test
+		pool.removeUsed(pool.buffer[tc.removed])
+
+		utilsTestLinkedList(t, pool, tc.expected, "used list")
+		if len(tc.expected) > 0 {
+			assert.Equal(t, tc.expected[0], pool.headUsed.idx, "Head use")
+			assert.Equal(t, tc.expected[len(tc.expected)-1], pool.tailUsed.idx, "Tail use")
+		} else {
+			assert.Nil(t, pool.headUsed, "Head use")
+			assert.Nil(t, pool.tailUsed, "Tail use")
+		}
+	}
+}
+
+func TestRemoveFree(t *testing.T) {
+	testCases := []struct {
+		original []TypePoolIdx
+		removed  TypePoolIdx
+		expected []TypePoolIdx
+	}{
+		{
+			original: []TypePoolIdx{0, 1, 2},
+			removed:  1,
+			expected: []TypePoolIdx{0, 2},
+		},
+	}
+
+	for _, tc := range testCases {
+		// prepare
+		numPages := 4
+		pool := NewBufferPool(numPages)
+		utilsMakeLinkedList(pool, tc.original)
+		if len(tc.original) > 0 {
+			pool.headFree = pool.buffer[tc.original[0]]
+		} else {
+			pool.headFree = nil
+		}
+
+		// test
+		pool.removeFree(pool.buffer[tc.removed])
+
+		utilsTestLinkedList(t, pool, tc.expected, "free list")
+		if len(tc.expected) > 0 {
+			assert.Equal(t, tc.expected[0], pool.headFree.idx, "Head free")
+		} else {
+			assert.Nil(t, pool.headFree, "Head free")
+		}
+	}
+}

@@ -82,3 +82,42 @@ func (bp *BufferPool) makeHeadFree(page *BufferedPage) {
 	page.prev = nil
 	bp.headFree = page
 }
+
+// Remove a page from the used LRU queue.
+// Input argument `page` should be already in the queue.
+func (bp *BufferPool) removeUsed(page *BufferedPage) {
+	if page == bp.headUsed {
+		bp.headUsed = page.next
+	}
+	if page == bp.tailUsed {
+		bp.tailUsed = page.prev
+	}
+	next := page.next
+	prev := page.prev
+	page.next = nil
+	if next != nil {
+		next.prev = prev
+	}
+	page.prev = nil
+	if prev != nil {
+		prev.next = next
+	}
+}
+
+// Remove a page from the used free queue.
+// Input argument `page` should be already in the queue. (Normally, it should be the head of the queue.)
+func (bp *BufferPool) removeFree(page *BufferedPage) {
+	if page == bp.headFree {
+		bp.headFree = page.next
+	}
+	next := page.next
+	prev := page.prev
+	page.next = nil
+	if next != nil {
+		next.prev = prev
+	}
+	page.prev = nil
+	if prev != nil {
+		prev.next = next
+	}
+}
