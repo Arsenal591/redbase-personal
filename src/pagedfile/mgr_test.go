@@ -180,6 +180,16 @@ func TestRemoveUsed(t *testing.T) {
 			removed:  1,
 			expected: []TypePoolIdx{0, 2},
 		},
+		{
+			original: []TypePoolIdx{0, 1, 2},
+			removed:  2,
+			expected: []TypePoolIdx{0, 1},
+		},
+		{
+			original: []TypePoolIdx{0},
+			removed:  0,
+			expected: []TypePoolIdx{},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -204,6 +214,16 @@ func TestRemoveFree(t *testing.T) {
 			original: []TypePoolIdx{0, 1, 2},
 			removed:  1,
 			expected: []TypePoolIdx{0, 2},
+		},
+		{
+			original: []TypePoolIdx{0, 1, 2},
+			removed:  2,
+			expected: []TypePoolIdx{0, 1},
+		},
+		{
+			original: []TypePoolIdx{0},
+			removed:  0,
+			expected: []TypePoolIdx{},
 		},
 	}
 
