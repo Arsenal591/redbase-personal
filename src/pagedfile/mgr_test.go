@@ -7,6 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type LinkedListType int
+
+const (
+	UsedList LinkedListType = iota
+	FreeList
+)
+
 func TestNewBufferPool(t *testing.T) {
 	numPages := 4
 	pool := NewBufferPool(numPages)
@@ -32,7 +39,7 @@ func TestNewBufferPool(t *testing.T) {
 	}
 }
 
-func utilsMakeLinkedList(pool *BufferPool, idxs []TypePoolIdx) {
+func utilsMakeLinkedList(pool *BufferPool, idxs []TypePoolIdx, typ LinkedListType) {
 	for i, idx := range idxs {
 		var prev, next *BufferedPage
 		if i > 0 {
@@ -44,26 +51,57 @@ func utilsMakeLinkedList(pool *BufferPool, idxs []TypePoolIdx) {
 		pool.buffer[idx].prev = prev
 		pool.buffer[idx].next = next
 	}
+
+	if typ == UsedList {
+		if len(idxs) > 0 {
+			pool.headUsed = pool.buffer[idxs[0]]
+			pool.tailUsed = pool.buffer[idxs[len(idxs)-1]]
+		} else {
+			pool.headUsed = nil
+			pool.tailUsed = nil
+		}
+	} else {
+		if len(idxs) > 0 {
+			pool.headFree = pool.buffer[idxs[0]]
+		} else {
+			pool.headFree = nil
+		}
+	}
 }
 
-func utilsTestLinkedList(t *testing.T, pool *BufferPool, expected []TypePoolIdx, typ string) {
+func utilsTestLinkedList(t *testing.T, pool *BufferPool, expected []TypePoolIdx, typ LinkedListType, desc ...string) {
 	for i, idx := range expected {
 		pos := pool.buffer[idx]
-		assert.NotNil(t, pos, fmt.Sprintf("%dth node of expected list not nil.", i+1), typ)
+		assert.NotNil(t, pos, fmt.Sprintf("%dth node of expected list not nil.", i+1), desc)
 		if i > 0 {
-			assert.NotNil(t, pos.prev, fmt.Sprintf("%dth node's prev", i+1), typ)
-			assert.Equal(t, expected[i-1], pos.prev.idx, fmt.Sprintf("%dth node's prev", i+1), typ)
+			assert.NotNil(t, pos.prev, fmt.Sprintf("%dth node's prev", i+1), desc)
+			assert.Equal(t, expected[i-1], pos.prev.idx, fmt.Sprintf("%dth node's prev", i+1), desc)
 		} else {
-			assert.Nil(t, pos.prev, "1st node's prev", typ)
+			assert.Nil(t, pos.prev, "1st node's prev", desc)
 		}
 		if i < len(expected)-1 {
-			assert.NotNil(t, pos.next, fmt.Sprintf("%dth node's next", i+1), typ)
-			assert.Equal(t, expected[i+1], pos.next.idx, fmt.Sprintf("%dth node's next", i+1), typ)
+			assert.NotNil(t, pos.next, fmt.Sprintf("%dth node's next", i+1), desc)
+			assert.Equal(t, expected[i+1], pos.next.idx, fmt.Sprintf("%dth node's next", i+1), desc)
 		} else {
-			assert.Nil(t, pos.next, "Last node's prev", typ)
+			assert.Nil(t, pos.next, "Last node's prev", desc)
 		}
-		assert.Equal(t, idx, pos.idx, fmt.Sprintf("%dth node's idx", i+1), typ)
+		assert.Equal(t, idx, pos.idx, fmt.Sprintf("%dth node's idx", i+1), desc)
 		pos = pos.next
+	}
+	if typ == UsedList {
+		if len(expected) > 0 {
+			assert.Equal(t, expected[0], pool.headUsed.idx, "head used", desc)
+			assert.Equal(t, expected[len(expected)-1], pool.tailUsed.idx, "tail used", desc)
+		} else {
+			assert.Nil(t, pool.headUsed, "head used", desc)
+			assert.Nil(t, pool.tailUsed, "tail used", desc)
+		}
+	} else {
+		if len(expected) > 0 {
+			assert.Equal(t, expected[0], pool.headFree.idx, "head free", desc)
+		} else {
+			assert.Nil(t, pool.headFree, "head free", desc)
+		}
 	}
 }
 
@@ -90,25 +128,11 @@ func TestHeadUsed(t *testing.T) {
 		// prepare
 		numPages := 4
 		pool := NewBufferPool(numPages)
-		utilsMakeLinkedList(pool, tc.original)
-		if len(tc.original) > 0 {
-			pool.headUsed = pool.buffer[tc.original[0]]
-			pool.tailUsed = pool.buffer[tc.original[len(tc.original)-1]]
-		} else {
-			pool.headUsed = nil
-			pool.tailUsed = nil
-		}
+		utilsMakeLinkedList(pool, tc.original, UsedList)
 
 		// test
 		pool.makeHeadUsed(pool.buffer[tc.newHeadIdx])
-
-		utilsTestLinkedList(t, pool, append([]TypePoolIdx{tc.newHeadIdx}, tc.original...), "used list")
-		assert.Equal(t, tc.newHeadIdx, pool.headUsed.idx, "Head use is modified.")
-		if len(tc.original) > 0 {
-			assert.Equal(t, tc.original[len(tc.original)-1], pool.tailUsed.idx, "Tail use is not modified.")
-		} else {
-			assert.Equal(t, tc.newHeadIdx, pool.tailUsed.idx, "Tail use is set same as head use.")
-		}
+		utilsTestLinkedList(t, pool, append([]TypePoolIdx{tc.newHeadIdx}, tc.original...), UsedList, "used list")
 	}
 }
 
@@ -135,18 +159,12 @@ func TestMakeHeadFree(t *testing.T) {
 		// prepare
 		numPages := 4
 		pool := NewBufferPool(numPages)
-		utilsMakeLinkedList(pool, tc.original)
-		if len(tc.original) > 0 {
-			pool.headFree = pool.buffer[tc.original[0]]
-		} else {
-			pool.headFree = nil
-		}
+		utilsMakeLinkedList(pool, tc.original, FreeList)
 
 		// test
 		pool.makeHeadFree(pool.buffer[tc.newHeadIdx])
 
-		utilsTestLinkedList(t, pool, append([]TypePoolIdx{tc.newHeadIdx}, tc.original...), "free list")
-		assert.Equal(t, tc.newHeadIdx, pool.headFree.idx, "Head free is modified.")
+		utilsTestLinkedList(t, pool, append([]TypePoolIdx{tc.newHeadIdx}, tc.original...), FreeList, "free list")
 	}
 }
 
@@ -167,26 +185,11 @@ func TestRemoveUsed(t *testing.T) {
 		// prepare
 		numPages := 4
 		pool := NewBufferPool(numPages)
-		utilsMakeLinkedList(pool, tc.original)
-		if len(tc.original) > 0 {
-			pool.headUsed = pool.buffer[tc.original[0]]
-			pool.tailUsed = pool.buffer[tc.original[len(tc.original)-1]]
-		} else {
-			pool.headUsed = nil
-			pool.tailUsed = nil
-		}
+		utilsMakeLinkedList(pool, tc.original, UsedList)
 
 		// test
 		pool.removeUsed(pool.buffer[tc.removed])
-
-		utilsTestLinkedList(t, pool, tc.expected, "used list")
-		if len(tc.expected) > 0 {
-			assert.Equal(t, tc.expected[0], pool.headUsed.idx, "Head use")
-			assert.Equal(t, tc.expected[len(tc.expected)-1], pool.tailUsed.idx, "Tail use")
-		} else {
-			assert.Nil(t, pool.headUsed, "Head use")
-			assert.Nil(t, pool.tailUsed, "Tail use")
-		}
+		utilsTestLinkedList(t, pool, tc.expected, UsedList, "used list")
 	}
 }
 
@@ -207,12 +210,7 @@ func TestRemoveFree(t *testing.T) {
 		// prepare
 		numPages := 4
 		pool := NewBufferPool(numPages)
-		utilsMakeLinkedList(pool, tc.original)
-		if len(tc.original) > 0 {
-			pool.headFree = pool.buffer[tc.original[0]]
-		} else {
-			pool.headFree = nil
-		}
+		utilsMakeLinkedList(pool, tc.original, UsedList)
 
 		// test
 		pool.removeFree(pool.buffer[tc.removed])
