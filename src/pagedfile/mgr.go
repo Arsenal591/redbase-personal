@@ -2,8 +2,10 @@ package pagedfile
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"pkg/extio"
 )
@@ -20,6 +22,27 @@ type BufferedPage struct {
 	dirty     bool                // whether there is un-flushed data in memory
 	pinned    int                 // reference num of this page
 	fi        *os.File            // underlying file handler
+}
+
+func (page *BufferedPage) Print() {
+	fmt.Println("----------------")
+	nextStr := "nil"
+	if page.next != nil {
+		nextStr = strconv.Itoa(int(page.next.idx))
+	}
+	prevStr := "nil"
+	if page.prev != nil {
+		prevStr = strconv.Itoa(int(page.prev.idx))
+	}
+	fmt.Printf("Idx %d, prev %s, next %s.\n", page.idx, prevStr, nextStr)
+
+	fmt.Printf("Dirty: %t, Pinned: %d\n", page.dirty, page.pinned)
+	if page.fi == nil {
+		fmt.Printf("File")
+	} else {
+		fmt.Printf("File: %s(%d), num: %d\n", page.fi.Name(), int(page.fi.Fd()), page.num)
+	}
+	fmt.Println("----------------")
 }
 
 // Creates a page handle for a given buffered page.
@@ -387,4 +410,26 @@ func (bp *BufferPool) ForcePages(file *os.File) error {
 		}
 	}
 	return nil
+}
+
+func (bp *BufferPool) Print() {
+	nUsed := 0
+	fmt.Println("Used list: ")
+	pos := bp.headUsed
+	for pos != nil {
+		pos.Print()
+		pos = pos.next
+		nUsed += 1
+	}
+	fmt.Printf("Total used: %d pages.\n", nUsed)
+
+	fmt.Println("Free list: ")
+	pos = bp.headFree
+	nFree := 0
+	for pos != nil {
+		fmt.Printf("%d ", pos.idx)
+		pos = pos.next
+		nFree++
+	}
+	fmt.Printf("\n")
 }
