@@ -2,6 +2,7 @@ package pagedfile
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -214,12 +215,95 @@ func TestRemoveFree(t *testing.T) {
 
 		// test
 		pool.removeFree(pool.buffer[tc.removed])
+		utilsTestLinkedList(t, pool, tc.expected, FreeList, "free list")
+	}
+}
 
-		utilsTestLinkedList(t, pool, tc.expected, "free list")
-		if len(tc.expected) > 0 {
-			assert.Equal(t, tc.expected[0], pool.headFree.idx, "Head free")
+func TestFindAvaiablePage(t *testing.T) {
+	testCases := []struct {
+		originalUsed []TypePoolIdx
+		pinned       []int
+		originalFree []TypePoolIdx
+		err          error
+		evicted      bool
+		expectedIdx  TypePoolIdx
+		desc         string
+	}{
+		{
+			originalUsed: []TypePoolIdx{0, 1},
+			pinned:       []int{2, 2},
+			originalFree: []TypePoolIdx{2, 3},
+			err:          nil,
+			evicted:      false,
+			expectedIdx:  2,
+			desc:         "Free page already",
+		},
+		{
+			originalUsed: []TypePoolIdx{0, 1, 3, 2},
+			pinned:       []int{0, 0, 0, 0},
+			originalFree: []TypePoolIdx{},
+			err:          nil,
+			evicted:      true,
+			expectedIdx:  2,
+			desc:         "Have to evict",
+		},
+		{
+			originalUsed: []TypePoolIdx{0, 1, 3, 2},
+			pinned:       []int{0, 0, 3, 2},
+			originalFree: []TypePoolIdx{},
+			err:          nil,
+			evicted:      true,
+			expectedIdx:  1,
+			desc:         "Have to evict, with some pages have pinned > 0",
+		},
+		{
+			originalUsed: []TypePoolIdx{0, 1, 3, 2},
+			pinned:       []int{4, 3, 3, 2},
+			originalFree: []TypePoolIdx{},
+			err:          ErrNoAvailablePage,
+			evicted:      false,
+			expectedIdx:  -1,
+			desc:         "No availble page",
+		},
+	}
+
+	for _, tc := range testCases {
+		// prepare
+		numPages := 4
+		pool := NewBufferPool(numPages)
+		utilsMakeLinkedList(pool, tc.originalUsed, UsedList)
+		utilsMakeLinkedList(pool, tc.originalFree, FreeList)
+
+		for i, idx := range tc.originalUsed {
+			pool.buffer[idx].fi = &os.File{}
+			pool.buffer[idx].num = 0
+			pool.buffer[idx].pinned = tc.pinned[i]
+		}
+
+		// test
+		page, err := pool.findAvailablePage()
+		assert.Equal(t, tc.err, err, "error", tc.desc)
+		if tc.err == nil {
+			assert.Equal(t, tc.expectedIdx, page.idx, "returned index", tc.desc)
+			_, ok := pool.cache[page.fi][page.num]
+			assert.Equal(t, false, ok, "returned page is no longer in cache")
+
+			if !tc.evicted {
+				utilsTestLinkedList(t, pool, tc.originalFree, FreeList, "if not evicted, free list should not be modified", tc.desc)
+				utilsTestLinkedList(t, pool, tc.originalUsed, UsedList, "if not evicted, used list should not be modified", tc.desc)
+			} else {
+				utilsTestLinkedList(t, pool, append([]TypePoolIdx{tc.expectedIdx}, tc.originalFree...), FreeList, "free list", "if evicted, free head is changed", tc.desc)
+				expectedUsed := make([]TypePoolIdx, 0)
+				for _, idx := range tc.originalUsed {
+					if idx != tc.expectedIdx {
+						expectedUsed = append(expectedUsed, idx)
+					}
+				}
+				utilsTestLinkedList(t, pool, expectedUsed, UsedList, "free list", "if evicted, free head is changed", tc.desc)
+			}
 		} else {
-			assert.Nil(t, pool.headFree, "Head free")
+			utilsTestLinkedList(t, pool, tc.originalUsed, UsedList, "on error, used list should not be modified", tc.desc)
+			utilsTestLinkedList(t, pool, tc.originalFree, FreeList, "on error, free list should not be modified", tc.desc)
 		}
 	}
 }

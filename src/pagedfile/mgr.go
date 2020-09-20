@@ -121,3 +121,48 @@ func (bp *BufferPool) removeFree(page *BufferedPage) {
 		prev.next = next
 	}
 }
+
+// Move a page inside the used queue to the front of it.
+func (bp *BufferPool) moveToHeadUsed(page *BufferedPage) {
+	bp.removeUsed(page)
+	bp.makeHeadUsed(page)
+}
+
+// Evict a used page, including removing the page from used queue and remove it from map.
+func (bp *BufferPool) evict(page *BufferedPage) {
+	delete(bp.cache[page.fi], page.num)
+	if len(bp.cache[page.fi]) == 0 {
+		delete(bp.cache, page.fi)
+	}
+	bp.removeUsed(page)
+	bp.makeHeadFree(page)
+}
+
+// Find an available page.
+// If there is any free page, return the first of it.
+// Otherwise, find a page that is least frequently used, evict it, and returns that page.
+// If no page is available (all pages have `pinned > 0`, then error `ErrNoAvailablePage` is returned.
+// Note that this function does not marked the returned page as in-use.
+func (bp *BufferPool) findAvailablePage() (*BufferedPage, error) {
+	if bp.headFree != nil {
+		return bp.headFree, nil
+	}
+	pos := bp.tailUsed
+	for pos != nil {
+		if pos.pinned == 0 {
+			break
+		}
+		pos = pos.prev
+	}
+	if pos == nil {
+		return nil, ErrNoAvailablePage
+	}
+	if pos.dirty {
+		err := pos.writeToDisk()
+		if err != nil {
+			return nil, err
+		}
+	}
+	bp.evict(pos)
+	return pos, nil
+}
