@@ -1,8 +1,13 @@
 package pagedfile
 
 import (
+	"encoding/binary"
+	"io"
+	"os"
+
 	"pkg/extio"
 )
+
 type TypePageNum int // page's num of corresponding file
 type TypePoolIdx int // page's location in buffer pool
 
@@ -15,6 +20,59 @@ type BufferedPage struct {
 	dirty     bool                // whether there is un-flushed data in memory
 	pinned    int                 // reference num of this page
 	fi        *os.File            // underlying file handler
+}
+
+// Creates a page handle for a given buffered page.
+// It is allowed to create multiple page handles for the same page.
+func (page *BufferedPage) clonePageHandle() *PageHandle {
+	page.pinned += 1
+	return &PageHandle{
+		memBuffer: page.memBuffer,
+		num:       page.num,
+	}
+}
+
+// Set the page to a different file.
+func (page *BufferedPage) setNewFile(fi *os.File, num TypePageNum) {
+	page.fi = fi
+	page.num = num
+	page.pinned = 0
+	page.dirty = false
+	page.memBuffer.Clear()
+}
+
+// Read data from on-disk file into in-memory buffer.
+func (page *BufferedPage) readFromDisk() error {
+	var err error
+	_, err = page.fi.Seek(int64(page.num*PageSize), io.SeekStart)
+	if err != nil {
+		return err
+	}
+	_, err = page.memBuffer.Seek(int64(0), io.SeekStart)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(page.memBuffer, page.fi)
+	return err
+}
+
+// Write data from in-memory buffer to on-disk file.
+func (page *BufferedPage) writeToDisk() error {
+	var err error
+	_, err = page.fi.Seek(int64(page.num*PageSize), io.SeekStart)
+	if err != nil {
+		return err
+	}
+	_, err = page.memBuffer.Seek(int64(0), io.SeekStart)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(page.fi, page.memBuffer)
+	if err != nil {
+		return err
+	}
+	page.dirty = false
+	return nil
 }
 
 type BufferPool struct {
@@ -56,6 +114,56 @@ func NewBufferPool(numPages int) *BufferPool {
 	ret.headFree = ret.buffer[0]
 
 	return ret
+}
+
+// Creates a new file with given filename.
+// It will also write file header to the file.
+func (bp *BufferPool) CreateFile(fileName string) error {
+	fi, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	defer fi.Close()
+	hdr := NewFileHeader()
+	err = binary.Write(fi, RWBytesOrder, &hdr)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (bp *BufferPool) DestroyFile(fileName string) error {
+	return os.Remove(fileName)
+}
+
+// Reads a new file with given filename.
+// It will first read the file header, obtaining all necessary information before returning the file handle.
+func (bp *BufferPool) OpenFile(fileName string) (*FileHandler, error) {
+	fi, err := os.OpenFile(fileName, os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	hdr := &FileHeader{}
+	err = binary.Read(fi, RWBytesOrder, hdr)
+	if err != nil {
+		fi.Close()
+		return nil, err
+	}
+	return &FileHandler{
+		hdr:     hdr,
+		bufPool: bp,
+		fi:      fi,
+	}, nil
+}
+
+// Closes a given file handle.
+// Before actually closes the file, it will first flush pages to disk.
+func (bp *BufferPool) CloseFile(fh *FileHandler) error {
+	err := bp.ReleasePages(fh.fi)
+	if err != nil {
+		return err
+	}
+	return fh.fi.Close()
 }
 
 // Make a page the head of used LRU queue.
@@ -128,6 +236,16 @@ func (bp *BufferPool) moveToHeadUsed(page *BufferedPage) {
 	bp.makeHeadUsed(page)
 }
 
+// Load a free page, including inserting the page into used queue and put the page into map.
+func (bp *BufferPool) load(page *BufferedPage) {
+	if bp.cache[page.fi] == nil {
+		bp.cache[page.fi] = make(map[TypePageNum]*BufferedPage)
+	}
+	bp.cache[page.fi][page.num] = page
+	bp.removeFree(page)
+	bp.makeHeadUsed(page)
+}
+
 // Evict a used page, including removing the page from used queue and remove it from map.
 func (bp *BufferPool) evict(page *BufferedPage) {
 	delete(bp.cache[page.fi], page.num)
@@ -165,4 +283,108 @@ func (bp *BufferPool) findAvailablePage() (*BufferedPage, error) {
 	}
 	bp.evict(pos)
 	return pos, nil
+}
+
+// Acquires a page for given file and corresponding page number, and returns a `PageHandle` instance.
+// If the page is already in cache, returns it directly.
+// Otherwise, it first calls `findAvailablePage` to find an available page for it and loads data on disk to memory.
+func (bp *BufferPool) getPage(file *os.File, num TypePageNum, unique bool) (*PageHandle, error) {
+	if page, ok := bp.cache[file][num]; ok { // already in LRU cache
+		if page.pinned > 0 && unique {
+			return nil, ErrPageBeingUsed
+		}
+		bp.moveToHeadUsed(page)
+		return page.clonePageHandle(), nil
+	} else {
+		page, err := bp.findAvailablePage()
+		if err != nil {
+			return nil, err
+		}
+		page.setNewFile(file, num)
+		err = page.readFromDisk()
+		if err != nil {
+			return nil, err
+		}
+		bp.load(page)
+		return page.clonePageHandle(), nil
+	}
+}
+
+// Allocates a new page for given file and page number.
+// If the page is already in cache, error `ErrPageAlreadyInBuffer` is returned.
+func (bp *BufferPool) allocatePage(file *os.File, num TypePageNum) (*PageHandle, error) {
+	if _, ok := bp.cache[file][num]; ok {
+		return nil, ErrPageAlreadyInBuffer
+	} else {
+		page, err := bp.findAvailablePage()
+		if err != nil {
+			return nil, err
+		}
+		page.setNewFile(file, num)
+		bp.load(page)
+		return page.clonePageHandle(), nil
+	}
+}
+
+// Marks a page as dirty.
+// When a page is marked as dirty, BufferPool will flush the data to disk before evicting it from cache.
+// If the page is not in cache, error `ErrPageNotInBuffer` is returned.
+// If the page is not pinned(referenced), error `ErrPageNotInUse` is returned.
+func (bp *BufferPool) markDirty(file *os.File, num TypePageNum) error {
+	if page, ok := bp.cache[file][num]; !ok {
+		return ErrPageNotInBuffer
+	} else {
+		if page.pinned == 0 {
+			return ErrPageNotInUse
+		} else {
+			page.dirty = true
+			bp.moveToHeadUsed(page)
+			return nil
+		}
+	}
+}
+
+// Unpins a page. It will decrease the page's reference counter by 1.
+// If the page is not in cache, error `ErrPageNotInBuffer` is returned.
+// If the page is not pinned(referenced), error `ErrPageNotInUse` is returned.
+func (bp *BufferPool) unpinPage(file *os.File, num TypePageNum) error {
+	if page, ok := bp.cache[file][num]; !ok {
+		return ErrPageNotInBuffer
+	} else {
+		if page.pinned == 0 {
+			return ErrPageNotInUse
+		} else {
+			page.pinned -= 1
+			return nil
+		}
+	}
+}
+
+// Releases all pages. It will flush all dirty pages of the file to disk.
+func (bp *BufferPool) ReleasePages(file *os.File) error {
+	for _, page := range bp.cache[file] {
+		if page.pinned > 0 {
+			return ErrPageBeingUsed
+		}
+		if page.dirty {
+			err := page.writeToDisk()
+			if err != nil {
+				return err
+			}
+		}
+		bp.evict(page)
+	}
+	return nil
+}
+
+func (bp *BufferPool) ForcePages(file *os.File) error {
+	for _, page := range bp.cache[file] {
+		if page.dirty {
+			err := page.writeToDisk()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
