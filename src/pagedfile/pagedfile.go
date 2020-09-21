@@ -1,9 +1,14 @@
 package pagedfile
 
-import "os"
+import (
+	"encoding/binary"
+	"os"
+	"pkg/extio"
+)
 
 const (
-	NonExistPageNum = -1
+	NonExistPageNum   = -1
+	FileHeaderPageNum = 0
 )
 
 // FileHeader always lies on the first page of a file, providing necessary page information.
@@ -19,8 +24,26 @@ func NewFileHeader() *FileHeader {
 	}
 }
 
+type FileHeaderMgr struct {
+	hdr *FileHeader
+	io  extio.BytesIO
+}
+
+func NewFileHeaderMgr(io extio.BytesIO) (*FileHeaderMgr, error) {
+	hdr := &FileHeader{}
+	err := binary.Read(io, RWBytesOrder, hdr)
+	if err != nil {
+		return nil, err
+	}
+	return &FileHeaderMgr{
+		hdr: hdr,
+		io:  io,
+	}, nil
+}
+
 type FileHandler struct {
-	hdr     *FileHeader
+	hdrMgr *FileHeaderMgr
+
 	bufPool *BufferPool
 	fi      *os.File
 }

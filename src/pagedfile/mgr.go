@@ -167,17 +167,12 @@ func (bp *BufferPool) OpenFile(fileName string) (*FileHandler, error) {
 	if err != nil {
 		return nil, err
 	}
-	hdr := &FileHeader{}
-	err = binary.Read(fi, RWBytesOrder, hdr)
+	handler, err := NewFileHandler(fi, bp)
 	if err != nil {
 		fi.Close()
 		return nil, err
 	}
-	return &FileHandler{
-		hdr:     hdr,
-		bufPool: bp,
-		fi:      fi,
-	}, nil
+	return handler, nil
 }
 
 // Closes a given file handle.
