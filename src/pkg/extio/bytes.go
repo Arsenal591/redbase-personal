@@ -5,19 +5,27 @@ import (
 	"io"
 )
 
-type BytesManager struct {
+type BytesIO interface {
+	io.ReadWriteSeeker
+	io.Closer
+	io.ReaderAt
+	io.WriterAt
+	Clear()
+}
+
+type basicBytesIO struct {
 	internal []byte
 	offset   int
 }
 
-func NewBytesManager(internal []byte) *BytesManager {
-	return &BytesManager{
+func NewBasicBytesIO(internal []byte) *basicBytesIO {
+	return &basicBytesIO{
 		internal: internal,
 		offset:   0,
 	}
 }
 
-func (m *BytesManager) Read(p []byte) (int, error) {
+func (m *basicBytesIO) Read(p []byte) (int, error) {
 	if m.offset >= len(m.internal) {
 		return 0, io.EOF
 	}
@@ -26,13 +34,13 @@ func (m *BytesManager) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func (m *BytesManager) ReadFrom(r io.Reader) (int64, error) {
+func (m *basicBytesIO) ReadFrom(r io.Reader) (int64, error) {
 	n, err := r.Read(m.internal[m.offset:])
 	m.offset += n
 	return int64(n), err
 }
 
-func (m *BytesManager) Seek(offset int64, whence int) (int64, error) {
+func (m *basicBytesIO) Seek(offset int64, whence int) (int64, error) {
 	if whence == io.SeekStart {
 		m.offset = int(offset)
 	} else if whence == io.SeekCurrent {
@@ -49,27 +57,42 @@ func (m *BytesManager) Seek(offset int64, whence int) (int64, error) {
 	return int64(m.offset), nil
 }
 
-func (m *BytesManager) Write(data []byte) (int, error) {
-	newOffset := m.offset + len(data)
-	if newOffset >= len(m.internal) {
+func (m *basicBytesIO) Write(data []byte) (int, error) {
+	if m.offset >= len(m.internal) {
 		return 0, io.EOF
 	}
-	copy(m.internal[m.offset:newOffset], data)
-	m.offset = newOffset
-	return len(data), nil
+	n := copy(m.internal[m.offset:], data)
+	m.offset += n
+	return n, nil
 }
 
-func (m *BytesManager) WriteTo(w io.Writer) (int64, error) {
+func (m *basicBytesIO) WriteTo(w io.Writer) (int64, error) {
 	n, err := w.Write(m.internal[m.offset:])
 	m.offset += n
 	return int64(n), err
 }
 
-func (m *BytesManager) Close() error {
+func (m *basicBytesIO) ReadAt(p []byte, offset int64) (int, error) {
+	if offset < 0 || int(offset) >= len(m.internal) {
+		return 0, io.EOF
+	}
+	n := copy(p, m.internal[offset:])
+	return n, nil
+}
+
+func (m *basicBytesIO) WriteAt(p []byte, offset int64) (int, error) {
+	if offset < 0 || int(offset) >= len(m.internal) {
+		return 0, io.EOF
+	}
+	n := copy(m.internal[offset:], p)
+	return n, nil
+}
+
+func (m *basicBytesIO) Close() error {
 	return nil
 }
 
-func (m *BytesManager) Clear() {
+func (m *basicBytesIO) Clear() {
 	for i := range m.internal {
 		m.internal[i] = 0
 	}

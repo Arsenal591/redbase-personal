@@ -3,6 +3,6 @@ package pagedfile
 import "pkg/extio"
 
 type PageHandle struct {
-	memBuffer *extio.BytesManager
+	memBuffer extio.BytesIO
 	num       TypePageNum
 }
