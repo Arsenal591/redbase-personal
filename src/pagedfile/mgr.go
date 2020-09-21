@@ -76,6 +76,7 @@ func (page *BufferedPage) readFromDisk() error {
 		return err
 	}
 	_, err = io.Copy(page.memBuffer, page.fi)
+	page.memBuffer.Seek(int64(0), io.SeekStart)
 	return err
 }
 
@@ -148,7 +149,7 @@ func (bp *BufferPool) CreateFile(fileName string) error {
 	}
 	defer fi.Close()
 	hdr := NewFileHeader()
-	err = binary.Write(fi, RWBytesOrder, &hdr)
+	err = binary.Write(fi, RWBytesOrder, hdr)
 	if err != nil {
 		return err
 	}
